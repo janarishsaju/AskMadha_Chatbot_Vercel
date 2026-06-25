@@ -251,7 +251,7 @@ Return ONLY valid JSON.`;
   }
 
   try {
-    const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+    const models = ["gemini-2.5-flash"];
     for (const modelName of models) {
       try {
         const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { responseMimeType: "application/json" } });
@@ -403,7 +403,7 @@ CRITICAL INSTRUCTIONS:
 6. ABBREVIATE CITATIONS: When displaying Bible references in your answer, you MUST convert full book names into standard 3-4 letter English abbreviations (e.g., use 'Deut 2:5' instead of 'Deuteronomy 2:5', use 'Lev 25' instead of 'Leviticus 25'). NEVER use the full book name in citations.`;
 
     // Retry logic with fallback model
-    const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+    const models = ["gemini-2.5-flash"];
     let lastError = null;
 
     for (const modelName of models) {
