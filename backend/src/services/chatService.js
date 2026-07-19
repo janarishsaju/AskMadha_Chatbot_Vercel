@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
-const geminiApiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
 const genAI = geminiApiKey ? new GoogleGenerativeAI(geminiApiKey) : null;
 
 const TERM_REPLACEMENTS = [
@@ -1891,7 +1891,7 @@ export async function generateChatResponse(query, messages, references) {
     '',
     '## TEXT FORMATTING RULE:',
     'Return all text in plain format ONLY. Do NOT use Markdown bold formatting (** symbols).',
-    'When displaying Bible references in the answer body, use standard English abbreviations (e.g., Lev 25:4-5, 2 Chr 36:21, Gen 1:1).',
+    'When displaying Bible references in the answer body, use standard Tamil abbreviations or full Tamil book names (e.g., லேவி 25:4-5, 2 குறி 36:21, தொநூ 1:1). Do NOT use English abbreviations.',
     '',
     '## LANGUAGE RULE:',
     'You MUST respond ENTIRELY in pure Tamil. Do NOT reply in English, even if the user\'s question or the context is in English. This is a strict requirement.',
@@ -1905,7 +1905,7 @@ export async function generateChatResponse(query, messages, references) {
     '',
     'விளக்கம்: [Your highly detailed explanation here. Include deep historical and theological context, Hebrew names, dates, and significance.]',
     '',
-    'விவிலிய மேற்கோள்கள்:',
+    'ஆதாரங்கள்:',
     '[List comprehensive Bible references related to the topic at the end]',
     '',
     '## ENUMERATION RULE:',

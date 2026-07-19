@@ -63,14 +63,17 @@ export function getStem(word) {
 
 export function buildEnglishIndex(bible) {
   const wordDocFreq = new Map();
-  const verseWords = bible.map(verse => {
+  const invertedIndex = new Map(); // word → Set of verse indices
+  const verseWords = bible.map((verse, idx) => {
     const words = new Set(verse.text.toLowerCase().split(/\W+/).filter(w => w.length > 0));
     for (const word of words) {
       wordDocFreq.set(word, (wordDocFreq.get(word) || 0) + 1);
+      if (!invertedIndex.has(word)) invertedIndex.set(word, new Set());
+      invertedIndex.get(word).add(idx);
     }
     return words;
   });
-  return { bible, wordDocFreq, verseWords, total: bible.length };
+  return { bible, wordDocFreq, invertedIndex, verseWords, total: bible.length };
 }
 
 function getIDF(wordDocFreq, total, word) {
@@ -79,8 +82,8 @@ function getIDF(wordDocFreq, total, word) {
   return Math.log(total / df);
 }
 
-export function searchVerses(englishIndex, query) {
-  const { bible, wordDocFreq, verseWords, total } = englishIndex;
+export function searchVerses(englishIndex, query, bookFilter = 'all') {
+  const { bible, wordDocFreq, invertedIndex, verseWords, total } = englishIndex;
 
   const queryParts = query.toLowerCase().split(/_+/).map(p => p.trim()).filter(p => p.length > 2);
   const cleanQuery = query.toLowerCase().replace(/-/g, '');
@@ -97,7 +100,59 @@ export function searchVerses(englishIndex, query) {
     return [];
   }
 
-  const scoredVerses = bible.map((verse, idx) => {
+  // Use inverted index to gather candidate verse indices instead of scanning all verses
+  const candidateSet = new Set();
+  for (const token of expandedTokens) {
+    const posting = invertedIndex.get(token);
+    if (posting) {
+      for (const idx of posting) candidateSet.add(idx);
+    }
+    // Also check stem
+    const stem = getStem(token);
+    if (stem !== token) {
+      const stemPosting = invertedIndex.get(stem);
+      if (stemPosting) {
+        for (const idx of stemPosting) candidateSet.add(idx);
+      }
+    }
+  }
+
+  // If we have query parts (fill-in-blank), we still need broader candidates
+  // but limit to the inverted index candidates + their neighbors
+  if (queryParts.length > 0 && candidateSet.size === 0) {
+    // Fallback: add candidates from query part significant words
+    for (const part of queryParts) {
+      const partWords = part.split(/\W+/).filter(w => w.length > 2 && !stopWords.has(w));
+      for (const w of partWords) {
+        const posting = invertedIndex.get(w);
+        if (posting) {
+          for (const idx of posting) candidateSet.add(idx);
+        }
+      }
+    }
+  }
+
+  // Add neighboring verses for context window scoring
+  const neighborsToAdd = new Set();
+  for (const idx of candidateSet) {
+    if (idx > 0) neighborsToAdd.add(idx - 1);
+    if (idx < bible.length - 1) neighborsToAdd.add(idx + 1);
+  }
+  for (const idx of neighborsToAdd) candidateSet.add(idx);
+
+  if (candidateSet.size === 0) return [];
+
+  // Apply book filter
+  let candidates = [...candidateSet];
+  if (bookFilter && bookFilter !== 'all') {
+    const filterUpper = bookFilter.toUpperCase();
+    candidates = candidates.filter(idx => bible[idx].book === filterUpper);
+  }
+
+  // Score only candidate verses (not all 31K+)
+  const scoreMap = new Map();
+  for (const idx of candidates) {
+    const verse = bible[idx];
     let score = 0;
     const text = verse.text.toLowerCase();
     const wordSet = verseWords[idx];
@@ -126,20 +181,23 @@ export function searchVerses(englishIndex, query) {
     if (originalTokensMatched === tokens.length && tokens.length > 0) score += 50;
     if (score > 0) score -= (text.length / 1000);
 
-    return { verse, score, idx };
-  });
+    scoreMap.set(idx, { verse, score, idx });
+  }
 
-  const smoothedScores = scoredVerses.map(item => {
+  // Context window smoothing (only among scored candidates)
+  const smoothedScores = [];
+  for (const [idx, item] of scoreMap) {
     let windowScore = item.score;
-    const idx = item.idx;
-    if (idx > 0 && bible[idx - 1].book === item.verse.book && bible[idx - 1].chapter === item.verse.chapter) {
-      windowScore += scoredVerses[idx - 1].score * 0.5;
+    const prev = scoreMap.get(idx - 1);
+    if (prev && bible[idx - 1].book === item.verse.book && bible[idx - 1].chapter === item.verse.chapter) {
+      windowScore += prev.score * 0.5;
     }
-    if (idx < bible.length - 1 && bible[idx + 1].book === item.verse.book && bible[idx + 1].chapter === item.verse.chapter) {
-      windowScore += scoredVerses[idx + 1].score * 0.5;
+    const next = scoreMap.get(idx + 1);
+    if (next && bible[idx + 1].book === item.verse.book && bible[idx + 1].chapter === item.verse.chapter) {
+      windowScore += next.score * 0.5;
     }
-    return { verse: item.verse, score: windowScore };
-  });
+    smoothedScores.push({ verse: item.verse, score: windowScore });
+  }
 
   smoothedScores.sort((a, b) => b.score - a.score);
   return smoothedScores.filter(item => item.score > 0).slice(0, 30).map(item => item.verse);
@@ -204,7 +262,9 @@ Example: [{"book": "DEUTERONOMY", "chapter": 19, "verse": "15"}]`;
     console.error('LLM reference retrieval error:', err.message);
     return [];
   }
-}const englishAbbrMap = {
+}
+
+const englishAbbrMap = {
   "GEN": "GENESIS", "EX": "EXODUS", "EXOD": "EXODUS", "LEV": "LEVITICUS", "NUM": "NUMBERS", 
   "DEUT": "DEUTERONOMY", "JOSH": "JOSHUA", "JUDG": "JUDGES", "RUTH": "RUTH", 
   "1 SAM": "1SAMUEL", "2 SAM": "2SAMUEL", "1 KGS": "1KINGS", "2 KGS": "2KINGS", 
@@ -302,11 +362,20 @@ Biblical References:
 
 8. ENUMERATION RULE: If the user asks to list, enumerate, or describe multiple items, you MUST explicitly number them in your response (e.g., 1) Item One, 2) Item Two) and ensure you capture ALL items mentioned in the relevant text. Be thorough so you do not miss any items (e.g., if listing offerings in Leviticus 1-6, include all 5: Burnt, Grain/Cereal, Peace, Sin, and Guilt Offerings).
 
-9. GREETINGS & CASUAL CHAT: If the user simply says "hi", "hello", "how are you", or asks a non-biblical question, reply naturally and politely, varying your greeting, but ALWAYS reminding the user that you are the Ask Madha Bible Assistant ready to answer their questions about the Holy Bible. DO NOT use the "ANSWER:" prefix, DO NOT use the "EXPLANATION:" section, DO NOT cite any verses, and ignore the context text completely.
-10. NUMBER FORMATTING RULE: You MUST strictly use numeric digits for all numbers (e.g., "40 Years", "5th", "20 days") instead of writing them out as words (e.g., NEVER use "forty years", "fifth", or "twenty days"). This is a strict requirement.
-11. SOLOMON'S FORTIFIED CITIES: If the user asks about the cities Solomon built or fortified (like the "Big Three" or chariot/defense cities), you MUST prioritize listing Hazor, Megiddo, and Gezer (Hazor guarded the northern approach, Megiddo protected the Jezreel Valley pass, and Gezer defended the coastal plain and roads to Jerusalem) and cite 1 Kings 9:15-16, rather than only mentioning Bethhoron or Baalath.
-12. TRIBE OF JOSEPH OVERSEER: If the user asks who Solomon appointed as the overseer or in charge of the forced labor for the tribe of Joseph (or house of Joseph) during the Temple/Millo work, you MUST answer Jeroboam (son of Nebat) and cite 1 Kings 11:28. Do NOT say the biblical record does not specify an individual.
-13. NORTHERN KINGDOM DYNASTIES: If the user asks how many dynasties ruled in the Northern Kingdom (Israel) from 922 B.C. to 721 B.C., you MUST answer 9 dynasties (producing a total of 19 kings). List all 9 houses (Jeroboam, Baasha, Zimri, Omri, Jehu, Shallum, Menahem, Pekah, Hoshea) rather than just listing 5.`;
+9. OFF-TOPIC RULE: If the user asks a question that is completely unrelated to the Bible, Christianity, or the Catholic faith (e.g., asking about cars, programming, movies, science fiction, math), you MUST NOT attempt to answer it using the Bible or force a biblical connection. Instead, politely reply ENTIRELY in English, stating that you are a Catholic Bible Assistant and can only answer questions related to the Holy Bible and Catholic teachings. DO NOT provide any verses or explanations, and DO NOT use the "ANSWER:" or "EXPLANATION:" formatting for these off-topic queries.
+
+10. GREETINGS & CASUAL CHAT: If the user simply says a greeting like "hi", "hello", or asks "how are you", reply with one of the following pre-defined greetings:
+- 🙏 Welcome! I'm the Ask Madha Bible Assistant, here to help you explore the Roman Catholic Bible. Ask me about Bible verses, topics, prayers, or Catholic teachings. How may I assist you today?
+- 🙏 Peace be with you! I'm your Roman Catholic Bible Assistant, ready to help you find Bible verses, understand Scripture, and learn more about the Catholic faith. What would you like to explore today?
+- 😊 Hello! Welcome to Ask Madha Bible Assistant. I'm here to help you discover the Word of God through the Roman Catholic Bible. What Bible verse or topic are you looking for today?
+- 🙏 Welcome! Ask me anything about the Roman Catholic Bible, Bible verses, saints, prayers, or Catholic teachings. I'm here to help with your spiritual journey.
+- 😊 Hello! I'm the Ask Madha Bible Assistant, ready to answer your questions about the Holy Bible and the Catholic faith. How can I help you today?
+DO NOT use the "ANSWER:" prefix, DO NOT use the "EXPLANATION:" section, DO NOT cite any verses, and ignore the references entirely when sending a greeting.
+
+11. NUMBER FORMATTING RULE: You MUST strictly use numeric digits for all numbers (e.g., "40 Years", "5th", "20 days") instead of writing them out as words (e.g., NEVER use "forty years", "fifth", or "twenty days"). This is a strict requirement.
+12. SOLOMON'S FORTIFIED CITIES: If the user asks about the cities Solomon built or fortified (like the "Big Three" or chariot/defense cities), you MUST prioritize listing Hazor, Megiddo, and Gezer (Hazor guarded the northern approach, Megiddo protected the Jezreel Valley pass, and Gezer defended the coastal plain and roads to Jerusalem) and cite 1 Kings 9:15-16, rather than only mentioning Bethhoron or Baalath.
+13. TRIBE OF JOSEPH OVERSEER: If the user asks who Solomon appointed as the overseer or in charge of the forced labor for the tribe of Joseph (or house of Joseph) during the Temple/Millo work, you MUST answer Jeroboam (son of Nebat) and cite 1 Kings 11:28. Do NOT say the biblical record does not specify an individual.
+14. NORTHERN KINGDOM DYNASTIES: If the user asks how many dynasties ruled in the Northern Kingdom (Israel) from 922 B.C. to 721 B.C., you MUST answer 9 dynasties (producing a total of 19 kings). List all 9 houses (Jeroboam, Baasha, Zimri, Omri, Jehu, Shallum, Menahem, Pekah, Hoshea) rather than just listing 5.`;
 
   const models = ['gemini-2.5-flash'];
   let lastError = null;

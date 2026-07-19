@@ -1,6 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Send, Book, BookOpen } from 'lucide-react';
+import { Send, Book, BookOpen, RefreshCw } from 'lucide-react';
+
+const MAX_QUERY_LENGTH = 2000;
+let messageIdCounter = 0;
+const generateId = () => `msg_${Date.now()}_${++messageIdCounter}`;
 
 const formatBookName = (book) => {
   if (!book) return '';
@@ -30,6 +34,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [languagePreference, setLanguagePreference] = useState('auto');
   const messagesEndRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -44,21 +49,44 @@ function App() {
     return () => clearTimeout(timer);
   }, [messages, isLoading]);
 
+  // Build conversation history for the backend (last 6 exchanges)
+  const buildHistory = useCallback(() => {
+    return messages.slice(-12).map(msg => ({
+      role: msg.sender === 'user' ? 'user' : 'assistant',
+      text: msg.text,
+    }));
+  }, [messages]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    const userMessage = { text: input, sender: 'user' };
+    const userMessage = { id: generateId(), text: input, sender: 'user' };
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
+    // Cancel any previous in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Set a 60-second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
     try {
-      const response = await fetch('/api/chat', {
+      const apiUrl = import.meta.env.DEV ? 'http://localhost:3001' : '';
+      const history = buildHistory();
+      const response = await fetch(`${apiUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: userMessage.text, languagePreference })
+        body: JSON.stringify({ query: userMessage.text, languagePreference, history }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         let errorMsg = 'Network response was not ok';
@@ -72,6 +100,7 @@ function App() {
       const data = await response.json();
       
       const botMessage = { 
+        id: generateId(),
         text: data.answer, 
         sender: 'bot',
         sources: data.sources 
@@ -79,22 +108,47 @@ function App() {
       
       setMessages(prev => [...prev, botMessage]);
     } catch (error) {
-      console.error('Error fetching chat response:', error);
-      const errorMessage = { 
-        text: `Sorry, I encountered an error: ${error.message}`, 
-        sender: 'bot' 
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        const errorMessage = { 
+          id: generateId(),
+          text: 'The request timed out. Please try again.', 
+          sender: 'bot',
+          isError: true,
+          retryQuery: userMessage.text,
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      } else {
+        console.error('Error fetching chat response:', error);
+        const errorMessage = { 
+          id: generateId(),
+          text: `Sorry, I encountered an error: ${error.message}`, 
+          sender: 'bot',
+          isError: true,
+          retryQuery: userMessage.text,
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      }
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
-  const getPlaceholder = () => {
-    if (languagePreference === 'english') return "Ask a question about the Bible...";
-    if (languagePreference === 'tamil') return "வேதாகமம் பற்றிய கேள்வியை கேளுங்கள் (Ask in Tamil)...";
-    return "Ask a question about the Bible in English or Tamil...";
+  const handleRetry = (retryQuery) => {
+    setInput(retryQuery);
+    // Remove the error message
+    setMessages(prev => prev.filter(m => !m.isError || m.retryQuery !== retryQuery));
   };
+
+  const getPlaceholder = () => {
+    if (languagePreference === 'english') return "Ask a question about the Holy Bible...";
+    if (languagePreference === 'tamil') return "திருவிவிலியம் தொடர்பான உங்கள் கேள்வியை தமிழில் கேளுங்கள்...";
+    return "Ask a question about the Holy Bible in English or Tamil...";
+  };
+
+  const charsRemaining = MAX_QUERY_LENGTH - input.length;
+  const isOverLimit = charsRemaining < 0;
 
   return (
     <div className="app-container glass glass-panel">
@@ -122,16 +176,26 @@ function App() {
           <div className="empty-state">
             <Book size={64} />
             <h2>Welcome to Ask Madha</h2>
-            <p>Ask any question about the Bible in English or Tamil.</p>
+            <p>Ask any question about the Holy Bible in English or Tamil.</p>
           </div>
         ) : (
-          messages.map((msg, index) => (
-            <div key={index} className={`message-wrapper ${msg.sender}`}>
+          messages.map((msg) => (
+            <div key={msg.id} className={`message-wrapper ${msg.sender}`}>
               <div className="message-bubble">
                 {msg.sender === 'bot' ? (
                   <ReactMarkdown>{msg.text}</ReactMarkdown>
                 ) : (
                   msg.text
+                )}
+                {msg.isError && msg.retryQuery && (
+                  <button 
+                    className="retry-btn" 
+                    onClick={() => handleRetry(msg.retryQuery)}
+                    title="Retry this question"
+                  >
+                    <RefreshCw size={14} />
+                    Retry
+                  </button>
                 )}
               </div>
               
@@ -143,7 +207,7 @@ function App() {
                   {msg.sources.map((source, i) => (
                     <div key={i} className="source-item">
                       <span className="source-ref">{formatBookName(source.book)} {source.chapter}:{source.verse}</span>
-                      <p className="source-text">{source.text.replace(/^["“']+|["”']+$/g, '')}</p>
+                      <p className="source-text">{source.text.replace(/^[""']+|[""']+$/g, '')}</p>
                     </div>
                   ))}
                 </div>
@@ -168,15 +232,23 @@ function App() {
 
       <div className="input-container">
         <form onSubmit={handleSubmit} className="input-form">
-          <input
-            type="text"
-            className="chat-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={getPlaceholder()}
-            disabled={isLoading}
-          />
-          <button type="submit" className="send-btn" disabled={!input.trim() || isLoading}>
+          <div className="input-wrapper">
+            <input
+              type="text"
+              className={`chat-input ${isOverLimit ? 'input-error' : ''}`}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={getPlaceholder()}
+              disabled={isLoading}
+              maxLength={MAX_QUERY_LENGTH + 100} // Allow slight overshoot so user sees the warning
+            />
+            {input.length > MAX_QUERY_LENGTH * 0.8 && (
+              <span className={`char-counter ${isOverLimit ? 'counter-error' : ''}`}>
+                {charsRemaining}
+              </span>
+            )}
+          </div>
+          <button type="submit" className="send-btn" disabled={!input.trim() || isLoading || isOverLimit}>
             <Send size={20} />
           </button>
         </form>

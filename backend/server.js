@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
@@ -15,8 +16,38 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-app.use(cors());
-app.use(express.json());
+
+// === Security: CORS — restrict to known origins ===
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.FRONTEND_URL, // Set this in production (e.g. https://ask-madha-chatbot.vercel.app)
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g. server-to-server, curl, mobile apps)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      return callback(null, true);
+    }
+    callback(new Error('Not allowed by CORS'));
+  },
+}));
+
+// === Security: Rate Limiting ===
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20,             // Max 20 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please wait a moment and try again.' },
+});
+
+app.use(express.json({ limit: '50kb' })); // Limit request body size
+
+// === Constants ===
+const MAX_QUERY_LENGTH = 2000;
 
 // === Load English Bible ===
 console.log('Loading English Bible data...');
@@ -28,7 +59,16 @@ try {
   let inDeut32 = false;
   const englishBible = rawBible.map((v, i) => {
     let newV = { ...v, id: i + 1 };
-    if (newV.book === 'DEUTERONOMY' && newV.chapter === 31) {
+    // Fix: Reset scope when we leave Deuteronomy
+    if (newV.book !== 'DEUTERONOMY') {
+      // If we were tracking Deuteronomy state, reset it
+      if (seenDeut31Verses.size > 0 || inDeut32) {
+        seenDeut31Verses = new Set();
+        inDeut32 = false;
+      }
+      return newV;
+    }
+    if (newV.chapter === 31) {
       const verseNum = parseInt(newV.verse);
       if (seenDeut31Verses.has(verseNum) || verseNum === 31 || inDeut32) {
         inDeut32 = true;
@@ -44,6 +84,7 @@ try {
   console.log(`English index built: ${englishIndex.total} verses, ${englishIndex.wordDocFreq.size} unique terms.`);
 } catch (error) {
   console.error('Failed to load English Bible data:', error);
+  // Graceful degradation — English endpoints will return 503
 }
 
 // === Load Tamil Bible ===
@@ -54,8 +95,9 @@ try {
   const bibleData = JSON.parse(fs.readFileSync(tamilPath, 'utf-8'));
   const enriched = bibleData.map((v, i) => {
     const cleanVerse = String(v.verse).replace(/[a-zA-Z]/g, '');
-    let cleanText = v.text.replace(/\\s*\\b\\d+[a-zA-Z]\\b\\s*/g, ' ').trim();
-    cleanText = cleanText.replace(/\s+\d+\.\s+[஀-௿\s,.'"-]+$/, '').trim();
+    // Fix: Use proper regex (was double-escaped, making it a no-op)
+    let cleanText = v.text.replace(/\s*\b\d+[a-zA-Z]\b\s*/g, ' ').trim();
+    cleanText = cleanText.replace(/\s+\d+\.\s+[஀-௿\s,.'""-]+$/, '').trim();
     return { ...v, id: i + 1, ref: `${v.book} ${v.chapter}:${cleanVerse}`, text: cleanText };
   });
   console.log('Building Tamil search index...');
@@ -63,19 +105,27 @@ try {
   console.log('Tamil search index built successfully.');
 } catch (error) {
   console.error('Failed to load Tamil Bible data:', error);
-  process.exit(1);
+  // Graceful degradation — Tamil endpoints will return 503 (consistent with English)
 }
 
 // Health check
 app.get('/', (req, res) => res.send('Ask Madha API is running.'));
 
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', chatLimiter, async (req, res) => {
   const { query, languagePreference, history = [], bookFilter = 'all' } = req.body;
   if (!query) return res.status(400).json({ error: 'Query is required.' });
 
+  // Input validation: enforce max length
+  if (typeof query !== 'string' || query.length > MAX_QUERY_LENGTH) {
+    return res.status(400).json({ error: `Query must be a string of at most ${MAX_QUERY_LENGTH} characters.` });
+  }
+
+  // Sanitize: strip control characters (keep newlines/tabs for legitimate use)
+  const sanitizedQuery = query.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
   try {
-    const detected = await detectLanguage(query, languagePreference);
-    console.log(`Query: "${query}" → Detected: ${detected.lang}, Translated: "${detected.query}"`);
+    const detected = await detectLanguage(sanitizedQuery, languagePreference);
+    console.log(`Query: "${sanitizedQuery}" → Detected: ${detected.lang}, Translated: "${detected.query}"`);
 
     if (detected.lang === 'tamil') {
       if (!tamilIndex) return res.status(503).json({ error: 'Tamil Bible service is unavailable.' });
@@ -101,7 +151,7 @@ app.post('/api/chat', async (req, res) => {
 
     let semanticVerses = [];
     try {
-      const llmRefs = await findReferencesWithLLM(query);
+      const llmRefs = await findReferencesWithLLM(sanitizedQuery);
       for (const ref of llmRefs) {
         if (!ref || typeof ref !== 'object') continue;
         const book = String(ref.book || '').toUpperCase();
@@ -128,10 +178,13 @@ app.post('/api/chat', async (req, res) => {
       console.error('Failed to parse LLM refs:', e);
     }
 
-    const keywordVerses = searchVerses(englishIndex, query);
+    // Fix: Pass bookFilter to English keyword search
+    const keywordVerses = searchVerses(englishIndex, sanitizedQuery, bookFilter);
     const relevantVerses = [];
     const seen = new Set();
     for (const v of [...semanticVerses, ...keywordVerses]) {
+      // Apply bookFilter to semantic verses too
+      if (bookFilter && bookFilter !== 'all' && v.book !== bookFilter.toUpperCase()) continue;
       const vId = `${v.book}_${v.chapter}_${v.verse}`;
       if (!seen.has(vId)) {
         seen.add(vId);
@@ -140,7 +193,7 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    const { answer, sources } = await generateEnglishResponse(query, relevantVerses);
+    const { answer, sources } = await generateEnglishResponse(sanitizedQuery, relevantVerses);
     
     // Extract verses from AI's generated text
     const extractedVerses = extractEnglishVersesFromText(answer, englishIndex);
@@ -166,4 +219,8 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Ask Madha API running on http://localhost:${PORT}`));
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  app.listen(PORT, () => console.log(`Ask Madha API running on http://localhost:${PORT}`));
+}
+
+export default app;
