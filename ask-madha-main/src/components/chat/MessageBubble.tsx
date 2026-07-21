@@ -18,46 +18,7 @@ interface MessageBubbleProps {
   showTimestamp?: boolean;
 }
 
-interface VersePillProps {
-  reference: string;
-  text: string;
-  isUserBubble?: boolean;
-}
 
-function VersePill({ reference, text, isUserBubble }: VersePillProps) {
-  const { colors } = useTheme();
-  const [expanded, setExpanded] = useState(false);
-
-  const pillBg = isUserBubble ? 'rgba(255,255,255,0.2)' : colors.primaryMuted;
-  const pillTextColor = isUserBubble ? colors.white : colors.primary;
-
-  return (
-    <View style={styles.versePillWrapper}>
-      <TouchableOpacity
-        onPress={() => setExpanded((e) => !e)}
-        style={[styles.chip, { backgroundColor: pillBg }]}
-        activeOpacity={0.7}
-      >
-        <Text style={[styles.chipText, { color: pillTextColor, fontFamily: TYPOGRAPHY.fonts.serifSemiBold }]}>
-          {reference}
-        </Text>
-        <Ionicons
-          name={expanded ? 'chevron-up' : 'chevron-down'}
-          size={12}
-          color={pillTextColor}
-          style={{ marginLeft: 2 }}
-        />
-      </TouchableOpacity>
-      {expanded && (
-        <View style={[styles.verseExpanded, { backgroundColor: isUserBubble ? 'rgba(255,255,255,0.15)' : colors.surfaceHover, borderColor: isUserBubble ? 'rgba(255,255,255,0.2)' : colors.border }]}>
-          <Text style={[styles.verseExpandedText, { color: isUserBubble ? colors.white : colors.foreground, fontFamily: TYPOGRAPHY.fonts.serifItalic }]}>
-            {text}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-}
 
 // Parse verses from markdown content
 function parseVerses(content: string): { cleanContent: string; verses: Array<{ ref: string; text: string }> } {
@@ -130,7 +91,9 @@ export function MessageBubble({ message, animate = true, showTimestamp = true }:
             {message.verses && message.verses.length > 0 && (
               <View style={styles.verses}>
                 {message.verses.map((ref) => (
-                  <VersePill key={ref} reference={ref} isUserBubble />
+                  <View key={ref} style={[styles.verseItem, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+                    <Text style={[styles.verseTitle, { color: colors.white }]}>{ref}</Text>
+                  </View>
                 ))}
               </View>
             )}
@@ -179,9 +142,22 @@ export function MessageBubble({ message, animate = true, showTimestamp = true }:
           </Markdown>
         )}
         {!isUser && parsedVerses.length > 0 && (
-          <View style={styles.verses}>
+          <View style={[styles.sourcesContainer, { borderTopColor: colors.border }]}>
+            <View style={styles.sourcesTitleRow}>
+              <Ionicons name="book" size={16} color={colors.primary} />
+              <Text style={[styles.sourcesTitle, { color: colors.primary }]}>
+                {cleanContent && /[\u0B80-\u0BFF]/.test(cleanContent) ? 'ஆதார விவிலிய குறிப்புகள்:' : 'Biblical References'}
+              </Text>
+            </View>
             {parsedVerses.map((verse) => (
-              <VersePill key={verse.ref} reference={verse.ref} text={verse.text} />
+              <View key={verse.ref} style={[styles.verseItem, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}>
+                <Text style={[styles.verseTitle, { color: colors.primary }]}>{verse.ref}</Text>
+                {verse.text ? (
+                  <Text style={[styles.verseText, { color: colors.foreground }]}>
+                    {verse.text.replace(/^["'']+|["'']+$/g, '')}
+                  </Text>
+                ) : null}
+              </View>
             ))}
           </View>
         )}
@@ -235,33 +211,35 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xs,
     alignSelf: 'flex-end',
   },
-  verses: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SPACING.xs,
-    marginTop: SPACING.sm,
+  sourcesContainer: {
+    marginTop: SPACING.md,
+    paddingTop: SPACING.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  chip: {
+  sourcesTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xxs + 1,
-    borderRadius: RADIUS.md,
+    gap: SPACING.xs,
+    marginBottom: SPACING.sm,
   },
-  chipText: {
-    fontSize: TYPOGRAPHY.sizes.xs,
-  },
-  versePillWrapper: {
-    marginBottom: SPACING.xxs,
-  },
-  verseExpanded: {
-    marginTop: SPACING.xs,
-    padding: SPACING.sm,
-    borderRadius: RADIUS.sm,
-    borderWidth: 0.5,
-  },
-  verseExpandedText: {
+  sourcesTitle: {
     fontSize: TYPOGRAPHY.sizes.sm,
+    fontFamily: TYPOGRAPHY.fonts.serifSemiBold,
+  },
+  verseItem: {
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 0.5,
+    marginBottom: SPACING.sm,
+  },
+  verseTitle: {
+    fontSize: TYPOGRAPHY.sizes.sm,
+    fontFamily: TYPOGRAPHY.fonts.serifBold,
+    marginBottom: SPACING.xs,
+  },
+  verseText: {
+    fontSize: TYPOGRAPHY.sizes.sm,
+    fontFamily: TYPOGRAPHY.fonts.serifRegular,
     lineHeight: 20,
   },
 });

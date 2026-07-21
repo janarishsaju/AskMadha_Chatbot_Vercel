@@ -47,53 +47,23 @@ export default function MessageBubble({ message, animate = true }) {
         </div>
 
         {message.verses && message.verses.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-1.5 px-1">
-              <BookOpenIcon className="h-3.5 w-3.5 text-primary/70" />
-              <span className="text-xs font-medium text-muted-foreground">
-                {message.verses.length} {message.verses.length === 1 ? 'reference' : 'references'}
-              </span>
+          <div className="mt-4 border-t border-border/50 pt-3">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
+              <BookOpenIcon className="h-4 w-4" />
+              {displayContent && /[\u0B80-\u0BFF]/.test(displayContent) ? 'ஆதார விவிலிய குறிப்புகள்:' : 'Biblical References'}
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="space-y-3">
               {message.verses.map((verse, i) => {
                 const verseRef = typeof verse === 'string' ? verse : verse.ref;
                 const verseText = typeof verse === 'object' ? verse.text : null;
-                const isExpanded = expandedVerse === i;
                 
                 return (
-                  <div key={i} className="contents">
-                    <button
-                      onClick={() => setExpandedVerse(isExpanded ? null : i)}
-                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-all ${
-                        isExpanded
-                          ? 'bg-primary text-white shadow-md'
-                          : 'bg-primary/10 text-primary hover:bg-primary/20 hover:shadow-sm'
-                      }`}
-                    >
-                      <span>{verseRef}</span>
-                      {verseText && (
-                        <svg
-                          className={`h-3 w-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      )}
-                    </button>
-                    {isExpanded && verseText && (
-                      <div className="w-full animate-[fade-in-up_0.2s_ease-out]">
-                        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 shadow-sm">
-                          <div className="mb-1.5 flex items-center gap-1.5">
-                            <div className="h-1 w-1 rounded-full bg-primary" />
-                            <span className="text-xs font-bold text-primary">{verseRef}</span>
-                          </div>
-                          <p className="font-serif text-sm leading-relaxed text-foreground/90">
-                            {verseText}
-                          </p>
-                        </div>
-                      </div>
+                  <div key={i} className="rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 shadow-sm">
+                    <span className="mb-1 block text-sm font-bold text-primary">{verseRef}</span>
+                    {verseText && (
+                      <p className="font-serif text-sm leading-relaxed text-foreground/90">
+                        {verseText.replace(/^["'']+|["'']+$/g, '')}
+                      </p>
                     )}
                   </div>
                 );
