@@ -132,7 +132,7 @@ function ChatContent() {
   }, []);
 
   const handleSend = useCallback(
-    async (content) => {
+    async (content, selectedLanguage = 'auto') => {
       if (streaming) return;
       setError(null);
 
@@ -145,10 +145,11 @@ function ChatContent() {
       setMessages((prev) => [...prev, userMsg]);
 
       let currentSessionId = sessionIdRef.current;
+      const actualLanguage = selectedLanguage === 'auto' ? detectLanguage(content) : selectedLanguage;
 
       if (!currentSessionId) {
         try {
-          currentSessionId = await createSession(detectLanguage(content), user?.bookFilter || 'all');
+          currentSessionId = await createSession(actualLanguage, user?.bookFilter || 'all');
           setSessionId(currentSessionId);
         } catch (e) {
           setError("Could not start a new conversation. Please try again.");
@@ -180,9 +181,9 @@ function ChatContent() {
           setStreaming(false);
           streamHandleRef.current = null;
         },
-      }, detectLanguage(content));
+      }, actualLanguage);
     },
-    [streaming]
+    [streaming, user?.bookFilter]
   );
 
   return (

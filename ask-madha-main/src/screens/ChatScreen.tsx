@@ -113,15 +113,16 @@ export function ChatScreen() {
     };
   }, [hydrated, setMessages, setCurrentSessionId]);
 
-  const handleSend = async (text: string) => {
+  const handleSend = async (text: string, selectedLanguage: 'auto' | 'english' | 'tamil' = 'auto') => {
     if (isStreaming) return; // guard against double-send
     addUserMessage(text);
     setStreaming(true);
 
     try {
       let id = currentSessionId;
+      const actualLanguage = selectedLanguage === 'auto' ? detectLanguage(text) : selectedLanguage;
       if (!id) {
-        id = await createSession(detectLanguage(text), profile?.bookFilter ?? 'all');
+        id = await createSession(actualLanguage, profile?.bookFilter ?? 'all');
         setCurrentSessionId(id);
       }
 
@@ -138,7 +139,7 @@ export function ChatScreen() {
           setError(message);
           streamRef.current = null;
         },
-      }, detectLanguage(text));
+      }, actualLanguage);
     } catch (e) {
       console.warn('[chat] send failed:', e);
       finalizeStreamMessage();

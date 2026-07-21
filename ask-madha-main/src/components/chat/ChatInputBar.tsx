@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TextInput, TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
+import { View, TextInput, TouchableOpacity, StyleSheet, ViewStyle, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -8,7 +8,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { TYPOGRAPHY, SPACING, RADIUS } from '../../theme/tokens';
 
 interface ChatInputBarProps {
-  onSend: (text: string) => void;
+  onSend: (text: string, language: 'auto' | 'english' | 'tamil') => void;
   placeholder?: string;
   disabled?: boolean;
   style?: ViewStyle;
@@ -18,16 +18,36 @@ export function ChatInputBar({ onSend, placeholder, disabled, style }: ChatInput
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
+  const [language, setLanguage] = useState<'auto' | 'english' | 'tamil'>('auto');
+
+  const cycleLanguage = () => {
+    impactMedium();
+    if (language === 'auto') setLanguage('english');
+    else if (language === 'english') setLanguage('tamil');
+    else setLanguage('auto');
+  };
+
+  const displayLanguage = { auto: 'Auto', english: 'EN', tamil: 'TA' }[language];
 
   const handleSend = () => {
     if (!text.trim() || disabled) return;
     impactMedium();
-    onSend(text.trim());
+    onSend(text.trim(), language);
     setText('');
   };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, SPACING.sm) }, style]}>
+        <TouchableOpacity
+          onPress={cycleLanguage}
+          disabled={disabled}
+          style={[
+            styles.langButton,
+            { backgroundColor: colors.surface, borderColor: colors.border }
+          ]}
+        >
+          <Text style={[styles.langButtonText, { color: colors.primary }]}>{displayLanguage}</Text>
+        </TouchableOpacity>
         <TextInput
           style={[
             styles.input,
@@ -89,6 +109,19 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     borderRadius: RADIUS.xl,
     lineHeight: 20,
+  },
+  langButton: {
+    height: 44,
+    minWidth: 48,
+    borderRadius: RADIUS.md,
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.sm,
+  },
+  langButtonText: {
+    fontSize: TYPOGRAPHY.sizes.sm,
+    fontFamily: TYPOGRAPHY.fonts.serifBold,
   },
   sendButton: {
     width: 44,

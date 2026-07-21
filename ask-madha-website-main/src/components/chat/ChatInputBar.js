@@ -5,6 +5,7 @@ import { SendIcon } from "@/components/icons";
 
 export default function ChatInputBar({ onSend, disabled }) {
   const [text, setText] = useState("");
+  const [language, setLanguage] = useState("auto");
   const textareaRef = useRef(null);
 
   useEffect(() => {
@@ -17,7 +18,7 @@ export default function ChatInputBar({ onSend, disabled }) {
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
-    onSend(trimmed);
+    onSend(trimmed, language);
     setText("");
   };
 
@@ -31,6 +32,16 @@ export default function ChatInputBar({ onSend, disabled }) {
   return (
     <div className="border-t border-border/50 bg-background/95 backdrop-blur-xl shadow-[0_-4px_16px_rgba(0,0,0,0.04)]">
       <div className="mx-auto flex max-w-4xl items-center gap-3 px-4 py-4 sm:px-6">
+        <select
+          value={language}
+          onChange={(e) => setLanguage(e.target.value)}
+          disabled={disabled}
+          className="h-12 shrink-0 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
+        >
+          <option value="auto">Auto</option>
+          <option value="english">English</option>
+          <option value="tamil">Tamil</option>
+        </select>
         <div className="relative flex-1">
           <textarea
             ref={textareaRef}
