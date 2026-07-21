@@ -25,7 +25,7 @@ function parseVerses(content: string): { cleanContent: string; verses: Array<{ r
   const verses: Array<{ ref: string; text: string }> = [];
   
   // Remove "BIBLICAL REFERENCE:" header and everything after it for clean content
-  const refIndex = content.search(/\*\*BIBLICAL REFERENCE:\*\*|BIBLICAL REFERENCE:/i);
+  const refIndex = content.search(/\*\*(BIBLICAL REFERENCE|ஆதார விவிலிய குறிப்புகள்):?\*\*|BIBLICAL REFERENCE:|ஆதார விவிலிய குறிப்புகள்:/i);
   let cleanContent = refIndex !== -1 ? content.substring(0, refIndex).trim() : content;
   
   // Match verse references like **JOHN 19:17** followed by text

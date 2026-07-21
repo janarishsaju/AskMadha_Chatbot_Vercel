@@ -6,7 +6,7 @@ import { BookOpenIcon } from "@/components/icons";
 
 function stripBiblicalReferences(content) {
   if (!content) return content;
-  const marker = /\*\*BIBLICAL REFERENCE:?\*\*/i;
+  const marker = /\*\*(BIBLICAL REFERENCE|ஆதார விவிலிய குறிப்புகள்):?\*\*/i;
   const idx = content.search(marker);
   if (idx === -1) return content;
   return content.slice(0, idx).trimEnd();
